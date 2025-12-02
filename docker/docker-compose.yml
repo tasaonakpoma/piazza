@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  piazza-api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: piazza-app
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+    restart: unless-stopped
+    volumes:
+      - ../logs:/app/logs
+    networks:
+      - piazza-network
+
+networks:
+  piazza-network:
+    driver: bridge
