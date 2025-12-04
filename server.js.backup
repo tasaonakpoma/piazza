@@ -63,14 +63,3 @@ app.listen(PORT, () => {
   console.log(`Piazza server running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
 });
-// Status endpoint - NEW FEATURE
-app.get('/api/status', (req, res) => {
-  res.json({
-    status: 'operational',
-    message: 'Piazza API is running smoothly',
-    uptime: process.uptime(),
-    timestamp: new Date().toISOString(),
-    version: '1.0.0',
-    database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
-  });
-});
