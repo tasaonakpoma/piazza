@@ -1,113 +1,91 @@
-const { body, validationResult } = require('express-validator');
+/**
 
 /**
- * Validation Middleware
- * Centralized validation rules and error handler for the Piazza API
+ * Validation chain for creating a new post.
+ * 
+ * Content length limits are important here to prevent abuse and ensure
+ * the UI can display posts properly.
  */
-
-// Middleware to handle validation errors
-const handleValidationErrors = (req, res, next) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({ 
-      success: false,
-      errors: errors.array() 
-    });
-  }
-  next();
-};
-
-// User registration validation rules
-const validateRegister = [
-  body('username')
-    .trim()
-    .isLength({ min: 3, max: 30 })
-    .withMessage('Username must be 3-30 characters')
-    .matches(/^[a-zA-Z0-9_]+$/)
-    .withMessage('Username can only contain letters, numbers, and underscores'),
-  
-  body('email')
-    .isEmail()
-    .normalizeEmail()
-    .withMessage('Valid email is required'),
-  
-  body('password')
-    .isLength({ min: 6 })
-    .withMessage('Password must be at least 6 characters')
-    .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/)
-    .withMessage('Password must contain at least one uppercase letter, one lowercase letter, and one number'),
-  
-  handleValidationErrors
-];
-
-// User login validation rules
-const validateLogin = [
-  body('email')
-    .isEmail()
-    .normalizeEmail()
-    .withMessage('Valid email is required'),
-  
-  body('password')
-    .notEmpty()
-    .withMessage('Password is required'),
-  
-  handleValidationErrors
-];
-
-// Post creation validation rules
 const validateCreatePost = [
-  body('title')
-    .trim()
-    .notEmpty()
-    .withMessage('Title is required')
-    .isLength({ max: 200 })
-    .withMessage('Title cannot exceed 200 characters'),
-  
-  body('content')
-    .trim()
-    .notEmpty()
-    .withMessage('Content is required')
-    .isLength({ max: 2000 })
-    .withMessage('Content cannot exceed 2000 characters'),
-  
-  body('topic')
-    .isIn(['Politics', 'Health', 'Sport', 'Tech'])
-    .withMessage('Topic must be one of: Politics, Health, Sport, Tech'),
-  
-  handleValidationErrors
+    body('title')
+        .trim()
+        .notEmpty()
+        .withMessage('Title is required')
+        .isLength({ max: LIMITS.postTitle.max })
+        .withMessage(`Title cannot exceed ${LIMITS.postTitle.max} characters`),
+    
+    body('content')
+        .trim()
+        .notEmpty()
+        .withMessage('Content is required')
+        .isLength({ max: LIMITS.postContent.max })
+        .withMessage(`Content cannot exceed ${LIMITS.postContent.max} characters`),
+    
+    body('topic')
+        .isIn(VALID_TOPICS)
+        .withMessage(`Topic must be one of: ${VALID_TOPICS.join(', ')}`),
+    
+    handleValidationErrors
 ];
 
-// Comment validation rules
+/**
+ * Validation chain for adding a comment to a post.
+ */
 const validateComment = [
-  body('text')
-    .trim()
-    .notEmpty()
-    .withMessage('Comment text is required')
-    .isLength({ max: 500 })
-    .withMessage('Comment cannot exceed 500 characters'),
-  
-  handleValidationErrors
+    body('text')
+        .trim()
+        .notEmpty()
+        .withMessage('Comment text is required')
+        .isLength({ max: LIMITS.comment.max })
+        .withMessage(`Comment cannot exceed ${LIMITS.comment.max} characters`),
+    
+    handleValidationErrors
 ];
 
-// MongoDB ObjectId validation
+// =============================================================================
+// PARAMETER VALIDATION
+// =============================================================================
+
+/**
+ * Factory function that creates middleware to validate MongoDB ObjectIds
+ * in route parameters.
+ * 
+ * Usage: router.get('/posts/:postId', validateObjectId('postId'), getPost)
+ * 
+ * @param {string} paramName - The name of the route parameter to validate
+ * @returns {Function} Express middleware function
+ */
 const validateObjectId = (paramName) => {
-  return (req, res, next) => {
-    const id = req.params[paramName];
-    if (!id || !id.match(/^[0-9a-fA-F]{24}$/)) {
-      return res.status(400).json({ 
-        success: false,
-        error: `Invalid ${paramName} format` 
-      });
-    }
-    next();
-  };
+    return (req, res, next) => {
+        const id = req.params[paramName];
+        
+        if (!id || !PATTERNS.objectId.test(id)) {
+            return res.status(400).json({
+                success: false,
+                message: `Invalid ${paramName} format. Expected a valid MongoDB ObjectId.`
+            });
+        }
+        
+        next();
+    };
 };
+
+// =============================================================================
+// EXPORTS
+// =============================================================================
 
 module.exports = {
-  validateRegister,
-  validateLogin,
-  validateCreatePost,
-  validateComment,
-  validateObjectId,
-  handleValidationErrors
+    // Validation chains
+    validateRegister,
+    validateLogin,
+    validateCreatePost,
+    validateComment,
+    
+    // Utility validators
+    validateObjectId,
+    handleValidationErrors,
+    
+    // Export config for potential use in tests or other modules
+    VALID_TOPICS,
+    LIMITS
 };
