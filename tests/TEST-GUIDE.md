@@ -183,18 +183,3 @@ Expected response for each:
   }
 }
 ```
-
-### Still Having Issues?
-
-1. **Check server logs**: Look at the terminal where `npm start` is running
-2. **Check test file**: Verify `tests/piazza-api-tests.js` exists
-3. **Check package.json**: Verify test script exists: `"test": "node tests/piazza-api-tests.js"`
-4. **Check Node version**: Run `node --version` (should be v16+ recommended)
-5. **Check npm version**: Run `npm --version`
-
-### Need Help?
-
-1. Note the exact error message you're seeing
-2. Check if server is running: `curl http://localhost:3000/health`
-3. Verify MongoDB connection in server logs
-4. Make sure PORT 3000 is not being used by another process
