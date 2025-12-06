@@ -4,79 +4,36 @@ const bcrypt = require('bcryptjs');
 const userSchema = new mongoose.Schema({
   username: {
     type: String,
-    required: [true, 'Username is required'],
+    required: true,
     unique: true,
     trim: true,
-    minlength: [3, 'Username must be at least 3 characters'],
-    maxlength: [30, 'Username cannot exceed 30 characters']
+    minlength: 3,
+    maxlength: 30
   },
   email: {
     type: String,
-    required: [true, 'Email is required'],
+    required: true,
     unique: true,
-    lowercase: true,
-    trim: true,
-    match: [/^\S+@\S+\.\S+$/, 'Please provide a valid email address']
+    lowercase: true
   },
   password: {
     type: String,
-    required: [true, 'Password is required'],
-    minlength: [6, 'Password must be at least 6 characters'],
-    select: false // Don't return password by default in queries
+    required: true,
+    minlength: 6,
+    select: false
   },
-  createdAt: {
-    type: Date,
-    default: Date.now
-  },
-  lastLogin: {
-    type: Date
-  },
-  isActive: {
-    type: Boolean,
-    default: true
-  }
+  createdAt: { type: Date, default: Date.now }
 });
 
-// Hash password before saving
+// Hash password before save
 userSchema.pre('save', async function(next) {
-  // Only hash the password if it has been modified (or is new)
-  if (!this.isModified('password')) {
-    return next();
-  }
-
-  try {
-    // Generate salt and hash password
-    const salt = await bcrypt.genSalt(10);
-    this.password = await bcrypt.hash(this.password, salt);
-    next();
-  } catch (error) {
-    next(error);
-  }
+  if (!this.isModified('password')) return next();
+  this.password = await bcrypt.hash(this.password, 10);
+  next();
 });
 
-// Method to compare password for login
-userSchema.methods.comparePassword = async function(candidatePassword) {
-  try {
-    return await bcrypt.compare(candidatePassword, this.password);
-  } catch (error) {
-    throw new Error('Password comparison failed');
-  }
+userSchema.methods.comparePassword = function(candidate) {
+  return bcrypt.compare(candidate, this.password);
 };
 
-// Method to update last login time
-userSchema.methods.updateLastLogin = async function() {
-  this.lastLogin = new Date();
-  await this.save();
-};
-
-// Virtual to get user's post count (if needed)
-userSchema.virtual('postCount', {
-  ref: 'Post',
-  localField: '_id',
-  foreignField: 'author',
-  count: true
-});
-
-const User = mongoose.model('User', userSchema);
-
-module.exports = User;
+module.exports = mongoose.model('User', userSchema);
