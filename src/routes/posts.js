@@ -5,19 +5,24 @@ const { protect } = require('../middleware/auth');
 
 const router = express.Router();
 
-const createPostValidation = [
-  body('title').trim().notEmpty().withMessage('Title is required').isLength({ max: 200 }).withMessage('Title cannot exceed 200 characters'),
-  body('content').trim().notEmpty().withMessage('Content is required').isLength({ max: 2000 }).withMessage('Content cannot exceed 2000 characters'),
-  body('topic').isIn(['Politics', 'Health', 'Sport', 'Tech']).withMessage('Topic must be one of: Politics, Health, Sport, Tech')
-];
+const TOPICS = ['Politics', 'Health', 'Sport', 'Tech'];
+const DEFAULT_EXPIRY = 5; // minutes
 
-router.post('/', protect, createPostValidation, async (req, res) => {
+// Create post (Action 2)
+router.post('/', protect, [
+  body('title').trim().notEmpty().isLength({ max: 200 }),
+  body('content').trim().notEmpty().isLength({ max: 2000 }),
+  body('topic').isIn(TOPICS)
+], async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({ errors: errors.array() });
   }
 
-  const { title, content, topic } = req.body;
+  const { title, content, topic, expirationMins } = req.body;
+  
+  const expiry = new Date();
+  expiry.setMinutes(expiry.getMinutes() + (expirationMins || DEFAULT_EXPIRY));
 
   try {
     const post = await Post.create({
@@ -25,20 +30,18 @@ router.post('/', protect, createPostValidation, async (req, res) => {
       content,
       topic,
       author: req.user._id,
-      authorUsername: req.user.username
+      authorUsername: req.user.username,
+      expirationTime: expiry
     });
 
-    res.status(201).json({
-      success: true,
-      message: 'Post created successfully',
-      post
-    });
+    res.status(201).json({ success: true, post });
   } catch (err) {
-    console.error('Create post error:', err);
-    res.status(500).json({ error: 'Server error while creating post' });
+    console.error('Create post error:', err.message);
+    res.status(500).json({ error: 'Failed to create post' });
   }
 });
 
+// Get all live posts
 router.get('/', async (req, res) => {
   try {
     const posts = await Post.find({ status: 'Live' })
@@ -47,11 +50,12 @@ router.get('/', async (req, res) => {
 
     res.json({ success: true, count: posts.length, posts });
   } catch (err) {
-    console.error('Get posts error:', err);
-    res.status(500).json({ error: 'Server error while fetching posts' });
+    console.error('Get posts error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch posts' });
   }
 });
 
+// Get single post
 router.get('/:id', async (req, res) => {
   try {
     const post = await Post.findById(req.params.id)
@@ -64,16 +68,17 @@ router.get('/:id', async (req, res) => {
 
     res.json({ success: true, post });
   } catch (err) {
-    console.error('Get post error:', err);
-    res.status(500).json({ error: 'Server error while fetching post' });
+    console.error('Get post error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch post' });
   }
 });
 
+// Browse by topic (Action 3)
 router.get('/topic/:topic', async (req, res) => {
-  const topic = req.params.topic;
+  const { topic } = req.params;
 
-  if (!['Politics', 'Health', 'Sport', 'Tech'].includes(topic)) {
-    return res.status(400).json({ error: 'Invalid topic' });
+  if (!TOPICS.includes(topic)) {
+    return res.status(400).json({ error: `Invalid topic. Use: ${TOPICS.join(', ')}` });
   }
 
   try {
@@ -83,81 +88,82 @@ router.get('/topic/:topic', async (req, res) => {
 
     res.json({ success: true, count: posts.length, posts });
   } catch (err) {
-    console.error('Get posts by topic error:', err);
-    res.status(500).json({ error: 'Server error while fetching posts by topic' });
+    console.error('Get topic posts:', err.message);
+    res.status(500).json({ error: 'Failed to fetch posts' });
   }
 });
 
+// Like post (Action 4)
 router.post('/:id/like', protect, async (req, res) => {
   try {
     const post = await Post.findById(req.params.id);
+    if (!post) return res.status(404).json({ error: 'Post not found' });
 
-    if (!post) {
-      return res.status(404).json({ error: 'Post not found' });
+    // Check expiry
+    if (post.status === 'Expired' || new Date() > post.expirationTime) {
+      return res.status(400).json({ error: 'Post expired' });
     }
 
-    post.dislikes = post.dislikes.filter(
-      (userId) => userId.toString() !== req.user._id.toString()
-    );
+    // Can't like own post
+    if (post.author.toString() === req.user._id.toString()) {
+      return res.status(400).json({ error: 'Cannot like own post' });
+    }
 
-    if (post.likes.some((userId) => userId.toString() === req.user._id.toString())) {
-      post.likes = post.likes.filter(
-        (userId) => userId.toString() !== req.user._id.toString()
-      );
+    const userId = req.user._id.toString();
+    
+    // Remove from dislikes first
+    post.dislikes = post.dislikes.filter(id => id.toString() !== userId);
+    
+    // Toggle like
+    const liked = post.likes.some(id => id.toString() === userId);
+    if (liked) {
+      post.likes = post.likes.filter(id => id.toString() !== userId);
     } else {
       post.likes.push(req.user._id);
     }
 
     await post.save();
-
-    res.json({
-      success: true,
-      message: 'Post like status updated',
-      likeCount: post.likes.length,
-      dislikeCount: post.dislikes.length
-    });
+    res.json({ success: true, likes: post.likes.length, dislikes: post.dislikes.length });
   } catch (err) {
-    console.error('Like post error:', err);
-    res.status(500).json({ error: 'Server error while liking post' });
+    console.error('Like error:', err.message);
+    res.status(500).json({ error: 'Failed to like' });
   }
 });
 
+// Dislike post (Action 4)
 router.post('/:id/dislike', protect, async (req, res) => {
   try {
     const post = await Post.findById(req.params.id);
+    if (!post) return res.status(404).json({ error: 'Post not found' });
 
-    if (!post) {
-      return res.status(404).json({ error: 'Post not found' });
+    if (post.status === 'Expired' || new Date() > post.expirationTime) {
+      return res.status(400).json({ error: 'Post expired' });
     }
 
-    post.likes = post.likes.filter(
-      (userId) => userId.toString() !== req.user._id.toString()
-    );
-
-    if (post.dislikes.some((userId) => userId.toString() === req.user._id.toString())) {
-      post.dislikes = post.dislikes.filter(
-        (userId) => userId.toString() !== req.user._id.toString()
-      );
+    const userId = req.user._id.toString();
+    
+    // Remove from likes first
+    post.likes = post.likes.filter(id => id.toString() !== userId);
+    
+    // Toggle dislike
+    const disliked = post.dislikes.some(id => id.toString() === userId);
+    if (disliked) {
+      post.dislikes = post.dislikes.filter(id => id.toString() !== userId);
     } else {
       post.dislikes.push(req.user._id);
     }
 
     await post.save();
-
-    res.json({
-      success: true,
-      message: 'Post dislike status updated',
-      likeCount: post.likes.length,
-      dislikeCount: post.dislikes.length
-    });
+    res.json({ success: true, likes: post.likes.length, dislikes: post.dislikes.length });
   } catch (err) {
-    console.error('Dislike post error:', err);
-    res.status(500).json({ error: 'Server error while disliking post' });
+    console.error('Dislike error:', err.message);
+    res.status(500).json({ error: 'Failed to dislike' });
   }
 });
 
+// Comment on post (Action 4)
 router.post('/:id/comment', protect, [
-  body('text').trim().notEmpty().withMessage('Comment text is required').isLength({ max: 500 }).withMessage('Comment cannot exceed 500 characters')
+  body('text').trim().notEmpty().isLength({ max: 500 })
 ], async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -166,113 +172,89 @@ router.post('/:id/comment', protect, [
 
   try {
     const post = await Post.findById(req.params.id);
+    if (!post) return res.status(404).json({ error: 'Post not found' });
 
-    if (!post) {
-      return res.status(404).json({ error: 'Post not found' });
+    if (post.status === 'Expired' || new Date() > post.expirationTime) {
+      return res.status(400).json({ error: 'Post expired' });
     }
 
-    const comment = {
+    post.comments.push({
       user: req.user._id,
       username: req.user.username,
       text: req.body.text
-    };
+    });
 
-    post.comments.push(comment);
     await post.save();
-
     res.status(201).json({
       success: true,
-      message: 'Comment added successfully',
-      comments: post.comments,
-      commentCount: post.comments.length
+      comment: post.comments[post.comments.length - 1],
+      total: post.comments.length
     });
   } catch (err) {
-    console.error('Add comment error:', err);
-    res.status(500).json({ error: 'Server error while adding comment' });
+    console.error('Comment error:', err.message);
+    res.status(500).json({ error: 'Failed to comment' });
   }
 });
 
-// GET /api/posts/topic/:topic - Get all posts by topic (Action 3)
-router.get('/topic/:topic', async (req, res) => {
-  try {
-    const { topic } = req.params;
-    
-    // Find all live posts for the specified topic
-    const posts = await Post.find({ 
-      topic: topic,
-      status: 'Live'
-    })
-      .populate('author', 'username')
-      .sort({ createdAt: -1 });
+// Most active post in topic (Action 5)
+router.get('/topic/:topic/active', protect, async (req, res) => {
+  const { topic } = req.params;
 
-    res.json({ 
-      success: true, 
-      count: posts.length, 
-      posts 
-    });
-  } catch (err) {
-    console.error('Get posts by topic error:', err);
-    res.status(500).json({ error: 'Server error while fetching posts by topic' });
+  if (!TOPICS.includes(topic)) {
+    return res.status(400).json({ error: 'Invalid topic' });
   }
-});
 
-// GET /api/posts/topic/:topic/active - Get most active post in topic (Action 5)
-router.get('/topic/:topic/active', async (req, res) => {
   try {
-    const { topic } = req.params;
-    
-    // Find the most active live post (highest likes + dislikes)
-    const posts = await Post.find({ 
-      topic: topic,
-      status: 'Live'
-    })
+    const posts = await Post.find({ topic, status: 'Live' })
       .populate('author', 'username');
 
-    if (posts.length === 0) {
-      return res.status(404).json({ error: 'No active posts found for this topic' });
+    if (!posts.length) {
+      return res.status(404).json({ error: 'No posts found' });
     }
 
-    // Calculate activity score (likes + dislikes) and find the most active
-    const mostActive = posts.reduce((max, post) => {
-      const currentActivity = post.likes.length + post.dislikes.length;
-      const maxActivity = max.likes.length + max.dislikes.length;
-      return currentActivity > maxActivity ? post : max;
-    });
+    // Find most active (highest likes + dislikes)
+    let mostActive = posts[0];
+    let maxScore = mostActive.likes.length + mostActive.dislikes.length;
 
-    res.json({ 
-      success: true, 
-      post: mostActive,
-      activityScore: mostActive.likes.length + mostActive.dislikes.length
-    });
+    for (const p of posts) {
+      const score = p.likes.length + p.dislikes.length;
+      if (score > maxScore) {
+        mostActive = p;
+        maxScore = score;
+      }
+    }
+
+    res.json({ success: true, post: mostActive, activity: maxScore });
   } catch (err) {
-    console.error('Get most active post error:', err);
-    res.status(500).json({ error: 'Server error while fetching most active post' });
+    console.error('Active post error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch' });
   }
 });
 
-// GET /api/posts/topic/:topic/expired - Get expired posts history for topic (Action 6)
-router.get('/topic/:topic/expired', async (req, res) => {
+// Expired posts history (Action 6)
+router.get('/topic/:topic/expired', protect, async (req, res) => {
+  const { topic } = req.params;
+
+  if (!TOPICS.includes(topic)) {
+    return res.status(400).json({ error: 'Invalid topic' });
+  }
+
   try {
-    const { topic } = req.params;
-    
-    // Find all expired posts for the specified topic
-    const posts = await Post.find({ 
-      topic: topic,
-      status: 'Expired'
-    })
-      .populate('author', 'username')
-      .sort({ expiresAt: -1 }); // Sort by expiration date, most recent first
+    // Update expired posts first
+    await Post.updateMany(
+      { expirationTime: { $lt: new Date() }, status: 'Live' },
+      { status: 'Expired' }
+    );
 
-    res.json({ 
-      success: true, 
-      count: posts.length, 
-      posts 
-    });
+    const posts = await Post.find({ topic, status: 'Expired' })
+      .sort({ expirationTime: -1 })
+      .populate('author', 'username');
+
+    res.json({ success: true, count: posts.length, posts });
   } catch (err) {
-    console.error('Get expired posts error:', err);
-    res.status(500).json({ error: 'Server error while fetching expired posts' });
+    console.error('Expired posts error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch' });
   }
 });
-'/like'
 
 module.exports = router;
