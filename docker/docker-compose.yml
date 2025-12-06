@@ -1,22 +1,22 @@
 version: '3.8'
 
 services:
-  piazza-api:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
-    container_name: piazza-app
+  api:
+    build: .
     ports:
       - "3000:3000"
     environment:
-      - NODE_ENV=production
-      - PORT=3000
-    restart: unless-stopped
-    volumes:
-      - ../logs:/app/logs
-    networks:
-      - piazza-network
+      - MONGODB_URI=mongodb://mongo:27017/piazza
+      - JWT_SECRET=your_secret_key
+    depends_on:
+      - mongo
 
-networks:
-  piazza-network:
-    driver: bridge
+  mongo:
+    image: mongo:6
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+volumes:
+  mongo_data:
